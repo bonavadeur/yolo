@@ -3,19 +3,56 @@ import threading
 import time
 from torch import hub
 from cv2 import VideoCapture
-from flask import Flask
+import cv2
+from flask import Flask, request, copy_current_request_context
+import darknet
 
 app = Flask(__name__)
+
+
+def image_detection(image_or_path, network, class_names, class_colors, thresh):
+    # Darknet doesn't accept numpy images.
+    # Create one with image we reuse for each detect
+    width = darknet.network_width(network)
+    height = darknet.network_height(network)
+    darknet_image = darknet.make_image(width, height, 3)
+    image = cv2.imread(image_or_path)
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    image_resized = cv2.resize(image_rgb, (width, height),
+                               interpolation=cv2.INTER_LINEAR)
+
+    darknet.copy_image_from_bytes(darknet_image, image_resized.tobytes())
+    detections = darknet.detect_image(
+        network, class_names, darknet_image, thresh=thresh)
+    darknet.free_image(darknet_image)
+    image = darknet.draw_boxes(detections, image_resized, class_colors)
+    return cv2.cvtColor(image, cv2.COLOR_BGR2RGB), detections
+
+
+@app.route('/api/stream/active/<source>/<int:time>', methods=['GET'])
+def handle_streaming_active_thread_init(source, time):
+    rtmp_streaming_url = source
+    time_to_detect = time
+    try:
+        th = threading.Thread(target=detect_streaming, args=(
+            rtmp_streaming_url, time_to_detect,))
+        th.start()
+    except:
+        print("error")
+    return 'OK', 200
+
 
 @app.route('/api/stream/<source>/<int:time>', methods=['GET'])
 def handle_streaming_thread_init(source, time):
     rtmp_streaming_url = source
     time_to_detect = time
     try:
-        threading.Thread(target=detect_streaming, args=(
-            rtmp_streaming_url,time_to_detect,)).start()
+        th = threading.Thread(target=detect_streaming, args=(
+            rtmp_streaming_url, time_to_detect,))
+        th.start()
     except:
         print("error")
+    th.join()
     return 'OK', 200
 
 
@@ -27,30 +64,44 @@ def detect_streaming(rtmp_streaming_url: str, time_to_detect: int):
     while (True):
         ret, frame = cap.read()
         if ret == True:
+            cv2.imwrite("frame.jpg", frame)
             frame_number += 1
             print("** HANDLE FRAME NUMBER : {}\n***TIMESTAMP: {}".format(
-                frame_number,time.strftime("%Y%m%d-%H%M%S")))
+                frame_number, time.strftime("%Y%m%d-%H%M%S")))
             print("RESULTS:")
-            results = model(frame)
-            results.print()
-            print(results.pandas().xyxy[0])
-            print()        
+            image_name = 'frame.jpg'
+            image, detections = image_detection(
+                image_name, network, class_names, class_colors, 0.25
+            )
+            darknet.print_detections(detections, True)
+            print()
             if time.monotonic() - start_time > time_to_detect:
                 break
     cap.release()
     return
 
+
+@app.route('/api/picture', methods=['POST'])
+def handle_picture_api():
+    @copy_current_request_context
+    def handle_picture():
+        f = request.files['upload']
+        f.save(f.filename)
+        image, detections = image_detection(
+            f.filename, network, class_names, class_colors, 0.25)
+        darknet.print_detections(detections, True)
+    try:
+        th = threading.Thread(target=handle_picture, args=())
+        th.start()
+    except:
+        print("error")
+    th.join()
+    return 'OK', 200
+
+
 @app.route('/api/active', methods=['GET'])
 def active_process():
     return 'Active process', 200
-
-
-@app.route('/api/terminate', methods=['GET'])
-def terminate_process():
-    global IS_TERMINATE
-    IS_TERMINATE = True
-    os._exit(0)
-    return
 
 
 if __name__ == '__main__':
