@@ -96,7 +96,7 @@ def handle_picture_api():
     except:
         print("error")
     th.join()
-    return 'OK', 200
+    return 'Okedeshita Oniichan >o<"', 200
 
 
 @app.route('/api/active', methods=['GET'])
