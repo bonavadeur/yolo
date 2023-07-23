@@ -6,6 +6,9 @@ from cv2 import VideoCapture
 import cv2
 from flask import Flask, request, copy_current_request_context
 import darknet
+import cv2
+from flask import Flask, request, copy_current_request_context
+import darknet
 
 app = Flask(__name__)
 
@@ -96,7 +99,7 @@ def handle_picture_api():
     except:
         print("error")
     th.join()
-    return 'OK', 200
+    return 'Okedeshita Oniichan >o<"', 200
 
 
 @app.route('/api/active', methods=['GET'])
